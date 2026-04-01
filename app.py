@@ -13,16 +13,21 @@ st.write("Detect whether a QR code is valid or potentially tampered using struct
 uploaded_file = st.file_uploader("Upload QR Code Image", type=["png", "jpg", "jpeg"])
 
 
-# Suspicious keywords list
 SUSPICIOUS_TERMS = ["bogus", "fake", "fraud", "test", "dummy", "xyz"]
 
 
 def is_suspicious_text(text):
     text_lower = text.lower()
-    for word in SUSPICIOUS_TERMS:
-        if word in text_lower:
-            return True
-    return False
+    return any(word in text_lower for word in SUSPICIOUS_TERMS)
+
+
+def extract_upi(data):
+    try:
+        parsed = urlparse(data)
+        params = parse_qs(parsed.query)
+        return params.get("pa", ["Not found"])[0]
+    except:
+        return "Not found"
 
 
 def validate_upi(data):
@@ -30,70 +35,67 @@ def validate_upi(data):
         parsed = urlparse(data)
         params = parse_qs(parsed.query)
 
-        pa = params.get("pa", [""])[0]  # UPI ID
-        pn = params.get("pn", [""])[0]  # Name
+        pa = params.get("pa", [""])[0]
+        pn = params.get("pn", [""])[0]
 
-        # Basic structure validation
         if not pa or "@" not in pa:
-            return False, "Invalid UPI ID structure"
+            return False
 
-        # Check suspicious words
         if is_suspicious_text(pa) or is_suspicious_text(pn):
-            return False, "Suspicious keywords detected"
+            return False
 
-        # Basic format check
         if not re.match(r"^[a-zA-Z0-9.\-_]+@[a-zA-Z]+$", pa):
-            return False, "Malformed UPI ID"
+            return False
 
-        return True, data
+        return True
 
-    except Exception:
-        return False, "Parsing error"
+    except:
+        return False
 
 
 def analyze_qr(image):
     img = np.array(image)
     detector = cv2.QRCodeDetector()
 
-    data, points, _ = detector.detectAndDecode(img)
+    data, _, _ = detector.detectAndDecode(img)
 
     if not data:
-        return "tampered", "QR not readable"
+        return "invalid", None, None
 
-    # Check if it's a UPI QR
+    upi_id = None
+
     if data.startswith("upi://"):
-        is_valid, message = validate_upi(data)
-        if is_valid:
-            return "valid", data
+        upi_id = extract_upi(data)
+        if validate_upi(data):
+            return "valid", data, upi_id
         else:
-            return "tampered", message
+            return "invalid", data, upi_id
 
-    # Generic QR validation
-    if len(data.strip()) < 5:
-        return "tampered", "Data too short"
+    if len(data.strip()) < 5 or is_suspicious_text(data):
+        return "invalid", data, None
 
-    if is_suspicious_text(data):
-        return "tampered", "Suspicious content detected"
-
-    return "valid", data
+    return "valid", data, None
 
 
 if uploaded_file:
     image = Image.open(uploaded_file).convert("RGB")
     st.image(image, caption="Uploaded QR Code", use_column_width=True)
 
-    status, result = analyze_qr(image)
+    status, data, upi_id = analyze_qr(image)
 
     st.write("---")
 
     if status == "valid":
         st.success("Valid QR Code")
         st.subheader("Decoded Content")
-        st.code(result)
+        st.code(data)
+
     else:
-        st.error("Potentially Tampered or Invalid QR Code")
-        st.subheader("Reason")
-        st.write(result)
+        st.error("Invalid QR Code")
+
+        if upi_id:
+            st.subheader("Extracted UPI ID")
+            st.code(upi_id)
 
     st.write("---")
     st.caption("Validation is based on QR decoding, structure checks, and rule-based content filtering.")
